@@ -1,0 +1,26 @@
+# RelativeDB / RelQL — https://github.com/RelativeDB/RelQL · https://relativedb.com
+#
+# These studies use the 0.2.x API (RelQL windows, per-entity anchors, native
+# fine-tuning). If PyPI is still on an older release, install from the repo:
+#
+#     pip install git+https://github.com/RelativeDB/RelQL.git#subdirectory=python
+#
+# The macOS arm64 wheel bundles the native inference engine (librt_c);
+# elsewhere build it from the repo and set RELATIVEDB_RT_LIB.
+relativedb>=0.2.0
+
+# Unified prediction-market client: Polymarket, Kalshi and friends behind one
+# interface. Self-hosted mode needs no API key.
+pmxt>=2.54
+
+# Parquet for the Hugging Face pulls and every cached result.
+pyarrow>=15
+
+# Hugging Face datasets: market tapes, Reddit dumps, Hacker News archives.
+huggingface_hub>=0.23
+
+# Reddit monthly dumps are zstd streams, read as byte-range prefixes.
+zstandard>=0.22
+
+# numpy and sentence-transformers arrive with relativedb; GDELT and the
+# newsroom RSS feeds are read over plain urllib, with no extra dependency.

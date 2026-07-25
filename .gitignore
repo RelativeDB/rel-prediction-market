@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.log
+.idea/
+.DS_Store
+
+# Raw source mirrors and caches — large and regenerable. See the README.
+data/hf/
+data/scale/embeddings/
+data/finetune/checkpoint/
+*.partial.parquet
+
+# No data in the repo — every table, cache and prediction is regenerable from
+# the pull/score commands in the README, and the numbers live in studies/.
+data/
