@@ -72,8 +72,8 @@ def report(name, scores, truth):
             "brier": brier(scores, truth), "logloss": logloss(scores, truth)}
 
 
-def load_arm(split: str, arm: str, cells: int) -> dict | None:
-    path = SCALE / f"pred_{split}_{arm}_{cells}.parquet"
+def load_arm(split: str, arm: str, cells: int, tag: str = "core") -> dict | None:
+    path = SCALE / f"pred_{tag}_{split}_{arm}_{cells}.parquet"
     if not path.exists():
         return None
     return {r["market_id"]: r["p"] for r in pq.read_table(path).to_pylist()}
@@ -81,14 +81,20 @@ def load_arm(split: str, arm: str, cells: int) -> dict | None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--wide", action="store_true",
+                    help="the enlarged Aug-Dec universe")
     ap.add_argument("--split", choices=["dev", "holdout"], default="dev")
     ap.add_argument("--context-cells", type=int, default=2048)
     args = ap.parse_args()
+    tag = "wide" if args.wide else "core"
+    if args.wide:
+        from scale.build import WIDE, use_sources
+        use_sources(**WIDE)
 
     _, _, corpus = build()
     chosen = [m for m in corpus.markets
               if (m["closes_at"] < SPLIT_AT) == (args.split == "dev")]
-    arms = {a: load_arm(args.split, a, args.context_cells)
+    arms = {a: load_arm(args.split, a, args.context_cells, tag)
             for a in ("news", "nonews")}
     scored = arms["news"]
     if scored is None:
@@ -143,7 +149,7 @@ def main() -> None:
               f"RT-J {auroc([rtj[i] for i in keep], t):.3f}   "
               f"blend {auroc([blend[i] for i in keep], t):.3f}")
 
-    out = SCALE / f"analysis_{args.split}_{args.context_cells}.json"
+    out = SCALE / f"analysis_{tag}_{args.split}_{args.context_cells}.json"
     out.write_text(json.dumps({"split": args.split, "n": len(chosen),
                                "rows": rows}, indent=1))
     print(f"\nwrote {out}")

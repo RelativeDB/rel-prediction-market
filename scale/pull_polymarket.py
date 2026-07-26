@@ -143,6 +143,9 @@ def main() -> None:
     ap.add_argument("--resolve-from", default="2025-11-01",
                     help="keep markets resolving on/after this date")
     ap.add_argument("--min-volume", type=float, default=250_000.0)
+    ap.add_argument("--out-prefix", default="pm",
+                    help="filename prefix, so a wider window can be pulled "
+                         "without clobbering a table a run is reading")
     ap.add_argument("--keep-machine", action="store_true",
                     help="keep the 15-minute crypto up/down markets")
     args = ap.parse_args()
@@ -158,23 +161,31 @@ def main() -> None:
     print(f">> universe: {universe.num_rows} resolved markets "
           f"({pc.sum(universe['resolved_yes']).as_py()} YES) "
           f"ending {args.resolve_from}..{args.end}")
-    pq.write_table(universe, OUT / "pm_markets.parquet")
+    pq.write_table(universe, OUT / f"{args.out_prefix}_markets.parquet")
 
     wanted = pa.array(sorted(set(universe["id"].to_pylist())))
+    # token1 is the YES side; every bar is built from YES fills only.
+    yes_tokens = pa.array(sorted({t for t in universe["token1"].to_pylist() if t}))
     groups = [g for g in row_group_index()
               if g["tmax"] >= start.timestamp() and g["tmin"] < end.timestamp()]
     fetched = sum(g["bytes"] for g in groups) / 1e9
     print(f">> fills: {len(groups)} row groups, ~{fetched * 0.29:.1f} GB "
           f"on the wire ({sum(g['rows'] for g in groups) / 1e6:.0f}M fills)")
 
-    columns = ["timestamp", "market_id", "price", "usd_amount", "token_amount",
-               "taker", "maker", "taker_direction"]
+    # asset_id says WHICH outcome token traded. Without it, a market's bars
+    # mix YES fills at 0.01 with NO fills at 0.99 and the series flips between
+    # p and 1-p — the defect that made "Will Jesus Christ return in 2025?"
+    # appear to swing from 0.009 to 0.993 and back, 1,600 times.
+    columns = ["timestamp", "market_id", "asset_id", "price", "usd_amount",
+               "token_amount", "taker", "maker", "taker_direction"]
     bars, kept, seen = [], 0, 0
     with HfFileSystem().open(f"datasets/{REPO}/trades.parquet") as handle:
         pf = pq.ParquetFile(handle)
         for i, g in enumerate(groups, 1):
             chunk = pf.read_row_group(g["g"], columns=columns)
-            mine = chunk.filter(pc.is_in(chunk["market_id"], value_set=wanted))
+            mine = chunk.filter(pc.and_(
+                pc.is_in(chunk["market_id"], value_set=wanted),
+                pc.is_in(chunk["asset_id"], value_set=yes_tokens)))
             seen += chunk.num_rows
             kept += mine.num_rows
             if mine.num_rows:
@@ -192,7 +203,7 @@ def main() -> None:
                                   .removesuffix("_max").removesuffix("_last")
                                   .removesuffix("_sum")
                                   for c in ticks.column_names])
-    pq.write_table(ticks, OUT / "pm_price_ticks.parquet")
+    pq.write_table(ticks, OUT / f"{args.out_prefix}_price_ticks.parquet")
     print(f">> wrote {ticks.num_rows:,} market-hours from {kept:,} fills "
           f"(scanned {seen / 1e6:.0f}M)")
 

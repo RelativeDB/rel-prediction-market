@@ -238,7 +238,13 @@ def main() -> None:
     ap.add_argument("--control-cap", type=int, default=400)
     ap.add_argument("--epochs", type=int, default=2)
     ap.add_argument("--learning-rate", type=float, default=1e-5)
-    ap.add_argument("--ft-batch", type=int, default=4)
+    ap.add_argument("--ft-batch", type=int, default=16,
+                    help="fine-tune batch. Small batches destabilize the "
+                         "per-batch label normalization: with 4 binary "
+                         "targets, an all-YES or all-NO batch has ~zero label "
+                         "variance, so the normalized target explodes and the "
+                         "reported loss rises even as the weights improve. "
+                         "16 makes a degenerate batch far less likely.")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)

@@ -34,6 +34,32 @@ from relativedb import (LinkDef, RetrieverWiring, Row, Schema, TableDef,
 
 SCALE = Path(__file__).resolve().parent.parent / "data" / "scale"
 
+# Which pulled tables this module reads. `use_sources` swaps in a wider window
+# without duplicating the builder: the enlarged study is the same code over a
+# bigger universe, so any difference in the result is the population, not the
+# pipeline.
+SOURCES = {"pm": "pm", "kalshi": "kalshi",
+           "news": ["news_articles.parquet"],
+           "semantic": "semantic_mentions.parquet"}
+
+
+def use_sources(*, pm: str = None, kalshi: str = None, news: list = None,
+                semantic: str = None):
+    if pm:
+        SOURCES["pm"] = pm
+    if kalshi:
+        SOURCES["kalshi"] = kalshi
+    if news:
+        SOURCES["news"] = list(news)
+    if semantic:
+        SOURCES["semantic"] = semantic
+    return SOURCES
+
+
+WIDE = dict(pm="pm_wide", kalshi="kalshi_wide",
+            news=["news_articles.parquet", "news_aug_oct.parquet"],
+            semantic="semantic_mentions_wide.parquet")
+
 STOP = {
     "will", "the", "and", "for", "with", "from", "that", "this", "have", "has",
     "before", "after", "than", "more", "less", "above", "below", "between",
@@ -79,14 +105,14 @@ def load_venues(venues: tuple[str, ...]):
     ticks: dict[str, list] = {}
 
     if "polymarket" in venues:
-        for t in pq.read_table(SCALE / "pm_price_ticks.parquet").to_pylist():
+        for t in pq.read_table(SCALE / f'{SOURCES["pm"]}_price_ticks.parquet').to_pylist():
             ticks.setdefault(f"pm:{t['market_id']}", []).append({
                 "hour": stamp(t["hour"]), "vwap": t["vwap"],
                 "close": t["close"], "high": t["high"], "low": t["low"],
                 "usd": t["usd"], "buy_usd": t["buy_usd"],
                 "sell_usd": t["sell_usd"], "takers": t["takers"],
                 "fills": t["fills"]})
-        for r in pq.read_table(SCALE / "pm_markets.parquet").to_pylist():
+        for r in pq.read_table(SCALE / f'{SOURCES["pm"]}_markets.parquet').to_pylist():
             event_id = f"pm:{r['event_id']}"
             event_titles.setdefault(event_id, r["event_title"] or r["question"])
             market_meta.append({
@@ -98,13 +124,13 @@ def load_venues(venues: tuple[str, ...]):
                 "resolved_yes": bool(r["resolved_yes"])})
 
     if "kalshi" in venues:
-        for t in pq.read_table(SCALE / "kalshi_price_ticks.parquet").to_pylist():
+        for t in pq.read_table(SCALE / f'{SOURCES["kalshi"]}_price_ticks.parquet').to_pylist():
             ticks.setdefault(f"ks:{t['ticker']}", []).append({
                 "hour": stamp(t["hour"]), "vwap": t["vwap"],
                 "close": t["close"], "high": t["high"], "low": t["low"],
                 "usd": None, "buy_usd": None, "sell_usd": None,
                 "takers": None, "fills": t["fills"]})
-        for r in pq.read_table(SCALE / "kalshi_markets.parquet").to_pylist():
+        for r in pq.read_table(SCALE / f'{SOURCES["kalshi"]}_markets.parquet').to_pylist():
             event_id = f"ks:{r['event_ticker']}"
             event_titles.setdefault(event_id, r["title"])
             market_meta.append({
@@ -151,8 +177,11 @@ def build_events(**kwargs) -> dict[str, str]:
 
 def read_articles(columns=("article_id", "published_at", "headline", "domain",
                            "tone", "persons", "orgs")) -> list[dict]:
-    return pq.read_table(SCALE / "news_articles.parquet",
-                         columns=list(columns)).to_pylist()
+    out = []
+    for name in SOURCES["news"]:
+        out.extend(pq.read_table(SCALE / name,
+                                 columns=list(columns)).to_pylist())
+    return out
 
 
 def candidate_articles(events: dict[str, str], *, min_overlap: int = 1,
@@ -194,7 +223,6 @@ def link_news(events: dict[str, str], articles, *, min_overlap: int,
     cutoff = max(2, int(len(events) * max_df))
     index = {t: e for t, e in index.items() if len(e) <= cutoff}
 
-    per_event: dict[str, int] = {}
     mentions, keep = [], {}
     for article in articles:
         hits: dict[str, int] = {}
@@ -205,12 +233,41 @@ def link_news(events: dict[str, str], articles, *, min_overlap: int,
         for event_id, overlap in hits.items():
             if overlap < min_overlap:
                 continue
-            if per_event.get(event_id, 0) >= max_per_event:
-                continue
-            per_event[event_id] = per_event.get(event_id, 0) + 1
             keep[article["article_id"]] = article
             mentions.append((event_id, article, overlap))
     return keep, mentions
+
+
+def cap_uniformly(mentions, *, per_bucket: int, bucket_days: int):
+    """Trim mentions per event *per time bucket*, keeping the best matches.
+
+    A single global cap per event is not time-neutral: articles arrive in
+    chronological order, so a first-come cap fills up with the oldest matches
+    and starves the end of the window. Measured on the first version of this
+    study, a 40-per-event cap left 96% of linked articles before December 10
+    and 4% after, out of a corpus that was 71/29 — the holdout period was
+    nearly newsless, which is precisely the period the ablation is scored on.
+
+    Bucketing by week and capping inside each bucket makes coverage flat in
+    time, and ranking within a bucket keeps the *strongest* matches rather
+    than the earliest.
+
+    ``mentions`` is a list of (event_id, article, overlap, similarity).
+    """
+    buckets: dict[tuple[str, int], list] = {}
+    for event_id, article, overlap, similarity in mentions:
+        when = stamp(article["published_at"])
+        key = (event_id, when.toordinal() // bucket_days)
+        buckets.setdefault(key, []).append(
+            (event_id, article, overlap, similarity, when))
+    out = []
+    for group in buckets.values():
+        # strongest first: semantic similarity when present, else word overlap
+        group.sort(key=lambda m: (-(m[3] if m[3] is not None else 0.0),
+                                  -m[2], m[4]))
+        out.extend(group[:per_bucket])
+    return [(event_id, article, overlap, similarity)
+            for event_id, article, overlap, similarity, _ in out]
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +275,8 @@ def build(*, lead_hours: int = 48, min_ticks: int = 6,
           venues: tuple[str, ...] = ("polymarket", "kalshi"),
           min_overlap: int = 2, max_per_event: int = 40,
           max_df: float = 0.02, with_news: bool = True,
-          tick_history_hours: int = 336):
+          tick_history_hours: int = 336,
+          per_bucket: int = 12, bucket_days: int = 7):
     tables = [
         TableDef.new_table("events")
         .column("title", ValueType.TEXT)
@@ -301,25 +359,47 @@ def build(*, lead_hours: int = 48, min_ticks: int = 6,
         titles = {e: event_titles[e] for e in live_events}
         keep, mentions = link_news(titles, articles, min_overlap=min_overlap,
                                    max_per_event=max_per_event, max_df=max_df)
-        linked = {(event_id, a["article_id"]): (a, float(overlap), None)
-                  for event_id, a, overlap in mentions}
+        candidates = [(event_id, a, float(overlap), None)
+                      for event_id, a, overlap in mentions]
 
         # Semantic links from scale/semantic.py, if it has been run. They are
         # merged rather than replacing the lexical ones: exact-name matches and
         # paraphrase matches fail in different directions.
-        semantic = SCALE / "semantic_mentions.parquet"
+        semantic = SCALE / SOURCES["semantic"]
         if semantic.exists():
             by_id = {a["article_id"]: a for a in articles}
             for row in pq.read_table(semantic).to_pylist():
                 article = by_id.get(row["article_id"])
                 if article is None or row["event_id"] not in live_events:
                     continue
-                key = (row["event_id"], row["article_id"])
-                previous = linked.get(key)
-                linked[key] = (article,
-                               previous[1] if previous else 0.0,
-                               float(row["similarity"]))
-                keep.setdefault(row["article_id"], article)
+                candidates.append((row["event_id"], article, 0.0,
+                                   float(row["similarity"])))
+
+        # Both sources are capped the same way, and only here: the semantic
+        # pass takes a global top-k per event, which is no more time-neutral
+        # than a first-come lexical cap.
+        best: dict[tuple[str, str], tuple] = {}
+        for event_id, article, overlap, similarity in candidates:
+            key = (event_id, article["article_id"])
+            previous = best.get(key)
+            if previous is None:
+                best[key] = (event_id, article, overlap, similarity)
+            else:
+                best[key] = (event_id, article,
+                             max(overlap, previous[2]),
+                             similarity if similarity is not None else previous[3])
+        capped = cap_uniformly(list(best.values()),
+                               per_bucket=per_bucket, bucket_days=bucket_days)
+        linked = {(event_id, a["article_id"]): (a, overlap, similarity)
+                  for event_id, a, overlap, similarity in capped}
+        keep = {a["article_id"]: a for _, a, _, _ in capped}
+        weeks = {}
+        for _, a, _, _ in capped:
+            weeks[stamp(a["published_at"]).strftime("%Y-W%V")] = \
+                weeks.get(stamp(a["published_at"]).strftime("%Y-W%V"), 0) + 1
+        print(f"   news: {len(candidates):,} candidate mentions -> "
+              f"{len(capped):,} kept, by week: "
+              + " ".join(f"{w}:{n}" for w, n in sorted(weeks.items())))
 
         for a in keep.values():
             when = stamp(a["published_at"])

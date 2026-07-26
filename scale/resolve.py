@@ -126,6 +126,8 @@ def cached_arm(path: Path, force: bool):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--wide", action="store_true",
+                    help="the enlarged Aug-Dec universe")
     ap.add_argument("--split", choices=["dev", "holdout"], default="dev")
     ap.add_argument("--limit", type=int, default=600,
                     help="markets to score (sampled deterministically)")
@@ -136,6 +138,12 @@ def main() -> None:
     ap.add_argument("--force", action="store_true", help="ignore cached arms")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
+    # The universe tags every cached file. Without it a --wide run would load
+    # the narrow run's predictions and silently report them as its own.
+    tag = "wide" if args.wide else "core"
+    if args.wide:
+        from scale.build import WIDE, use_sources
+        use_sources(**WIDE)
 
     schema, wiring, corpus = build()
     markets = corpus.markets
@@ -162,7 +170,7 @@ def main() -> None:
                "always NO (p=0.5)": {i: 0.5 for i in ids}}
 
     for arm in [a.strip() for a in args.arms.split(",") if a.strip()]:
-        path = SCALE / f"pred_{args.split}_{arm}_{args.context_cells}.parquet"
+        path = SCALE / f"pred_{tag}_{args.split}_{arm}_{args.context_cells}.parquet"
         scored = cached_arm(path, args.force)
         label = ("RT-J (markets+tape+news)" if arm == "news"
                  else "RT-J (markets+tape only)")
@@ -195,7 +203,7 @@ def main() -> None:
         print(f"\n  AUROC 95% interval — RT-J [{lo:.3f}, {hi:.3f}]   "
               f"price [{plo:.3f}, {phi:.3f}]")
 
-    out = SCALE / f"report_{args.split}_{args.context_cells}.json"
+    out = SCALE / f"report_{tag}_{args.split}_{args.context_cells}.json"
     out.write_text(json.dumps({"split": args.split, "n": len(sample),
                                "rows": table}, indent=1))
     print(f"\nwrote {out}")

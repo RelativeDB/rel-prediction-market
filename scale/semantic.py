@@ -101,12 +101,18 @@ def link(events: dict[str, str], articles: list[dict], *, top_k: int,
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--wide", action="store_true")
     ap.add_argument("--top-k", type=int, default=40)
     ap.add_argument("--min-similarity", type=float, default=0.42)
     ap.add_argument("--prefilter-overlap", type=int, default=1,
                     help="shared distinctive words needed to be a candidate")
     ap.add_argument("--max-candidates", type=int, default=400_000)
     args = ap.parse_args()
+    out_name = 'semantic_mentions.parquet'
+    if args.wide:
+        from scale.build import WIDE, use_sources
+        use_sources(**WIDE)
+        out_name = WIDE['semantic']
 
     from scale.build import build_events, candidate_articles
     events = build_events()
@@ -122,7 +128,7 @@ def main() -> None:
         "similarity": [m[2] for m in mentions],
         "published_at": [by_article[m[1]]["published_at"] for m in mentions],
     })
-    pq.write_table(table, SCALE / "semantic_mentions.parquet")
+    pq.write_table(table, SCALE / out_name)
     print(f">> wrote {table.num_rows:,} semantic mentions across "
           f"{len(set(t for t in table['event_id'].to_pylist())):,} events")
 
