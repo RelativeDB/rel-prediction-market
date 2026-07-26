@@ -108,11 +108,11 @@ Holdout was scored once, after all of it was frozen.
 |---|---:|---:|---:|---:|
 | market price (24h vwap) | 0.726 | 0.780 | 0.170 | 0.497 |
 | always NO (p=0.5) | 0.300 | 0.500 | 0.250 | 0.693 |
-| RT-J (markets+tape+news) | 0.759 | 0.716 | 0.211 | 0.613 |
+| RT-J (markets+tape+news) | 0.762 | 0.709 | 0.209 | 0.609 |
 | RT-J (news ablated) | 0.752 | 0.686 | 0.213 | 0.622 |
-| price × RT-J (logit mean) | 0.768 | **0.805** | 0.164 | 0.495 |
+| price × RT-J (logit mean) | 0.767 | **0.804** | 0.164 | 0.494 |
 
-Blending RT-J into the price gained **+0.025 AUROC [+0.013, +0.036]** on a
+Blending RT-J into the price gained **+0.024 AUROC [+0.013, +0.036]** on a
 paired bootstrap — an interval clear of zero. Better still, the gain looked
 *interpretable*: on contracts where the crowd was unsure (price 0.2–0.8, n=773)
 RT-J beat the price outright, 0.654 to 0.620, while the price dominated where
@@ -125,29 +125,47 @@ where the market has least to say.
 |---|---:|---:|---:|---:|
 | market price (24h vwap) | 0.728 | **0.748** | 0.171 | 0.503 |
 | always NO (p=0.5) | 0.241 | 0.500 | 0.250 | 0.693 |
-| RT-J (markets+tape+news) | 0.749 | 0.613 | 0.227 | 0.650 |
+| RT-J (markets+tape+news) | 0.741 | 0.591 | 0.227 | 0.649 |
 | RT-J (news ablated) | 0.723 | 0.561 | 0.230 | 0.661 |
-| price × RT-J (logit mean) | 0.742 | 0.749 | 0.173 | 0.517 |
+| price × RT-J (logit mean) | 0.741 | 0.741 | 0.174 | 0.517 |
 
-The gain went to **+0.002 [-0.010, +0.013]**. The uncertain-market story
+The gain went to **−0.007 [−0.019, +0.005]**. The uncertain-market story
 reversed: 0.583 for RT-J against 0.603 for the price. Nothing survived.
 
 ### One thing did replicate: the news tables
 
 | | dev | holdout |
 |---|---|---|
-| RT-J with news | 0.716 | 0.613 |
+| RT-J with news | 0.709 | 0.591 |
 | RT-J, news ablated | 0.686 | 0.561 |
-| **gain** | **+0.030 [-0.000, +0.060]** | **+0.052 [+0.014, +0.090]** |
+| **gain** | **+0.023 [−0.007, +0.054]** | **+0.030 [−0.009, +0.068]** |
 
-Deleting `news_articles` and `news_mentions` costs the model real accuracy, in
-both splits, and on the held-out one the interval clears zero. The headlines
-are doing work — the model reads them and is better for it. It is just not
-enough work to catch a market price.
+Deleting `news_articles` and `news_mentions` costs the model accuracy in both
+splits. The direction is consistent and the sign never flips — but neither
+interval clears zero, so this is suggestive, not established.
 
-This is worth separating from the headline result, because the two questions
-are different. "Does the news help the model?" — yes, replicated. "Does the
-model beat the crowd?" — no.
+### The number this replaced, and why
+
+The first version of this study reported **+0.052 [+0.014, +0.090]** on the
+holdout and called it the one result that replicated. It was an artifact of how
+mentions were capped.
+
+`link_news` kept at most 40 articles per event and walked the corpus in
+chronological order, so the cap filled with the *earliest* matches and
+discarded everything later. Measured afterwards, the linked table was 96%
+pre-December-10 and 4% after, out of a corpus that was 71/29 — December held
+404,750 articles and contributed 1,572. The holdout period, which is the half
+the ablation is scored on, was nearly newsless.
+
+Capping per event *per week* and ranking by match strength inside each bucket
+makes coverage flat in time (December went from 1,572 linked articles to
+11,851). Rescored on that database, the holdout gain fell from +0.052 to
++0.030 and its interval now includes zero.
+
+The prediction going in was that fixing coverage would *widen* the gap, since
+the news arm had been handicapped on exactly the markets it was judged on. It
+narrowed instead — which means part of the original effect was not news
+helping, but the particular articles a first-come cap happened to keep.
 
 ### Where the dev edge actually lived
 
@@ -163,10 +181,12 @@ skill. RT-J scored 0.633 there on dev and 0.463 on holdout: a coin flip that
 landed heads once. In every stratum where the price *is* informative, RT-J
 sits below it in both splits.
 
-**Verdict: the news tables help the model (replicated), and the model still does not beat the market price at a two-to-three-day lead (replicated).**
+**Verdict: the model does not beat the market price at a two-to-three-day lead
+(replicated), and the news tables give it a small, consistently-signed lift
+that this sample cannot establish.**
 That is the correct prior about liquid prediction markets, and the honest
 output of the experiment. Without the holdout this would have been written up
-as "+0.025 AUROC over the market" with a plausible mechanism attached.
+as "+0.024 AUROC over the market" with a plausible mechanism attached.
 
 What the study does establish is that the negative result is trustworthy: the
 leakage controls were verified directly (at the 2025-12-10 anchor, 1,440

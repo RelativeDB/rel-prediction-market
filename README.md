@@ -28,16 +28,20 @@ RT-J discovers the subgraph it wants.
 | # | question | answer |
 |---|---|---|
 | 1 | Can it call a 6-hour price move on 45 live markets? | Inconclusive — n too small |
-| 2 | Can it beat the market's own price at resolution, 2–3 days out? | **No** (holdout: +0.002 AUROC [−0.010, +0.013]) |
-| 2b | Do news tables help the model itself? | **Yes, replicated** (+0.052 [+0.014, +0.090] held out) |
+| 2 | Can it beat the market's own price at resolution, 2–3 days out? | **No** (holdout: −0.007 AUROC [−0.019, +0.005]) |
+| 2b | Do news tables help the model itself? | **Small and consistently positive, not established** (+0.030 [−0.009, +0.068] held out) |
 | 3 | Does Reddit/HN chatter predict the next 6 hours? | **No** — on either a lexical or a semantic graph |
 | 4 | Does a jump have news behind it? | **No** — 46.8% of jumps vs 48.6% of random minutes |
 | 4b | Can it predict which headline moves a market? | Underpowered — 59 positives can't separate ±0.03 |
 | 5 | Does fine-tuning on Trump/war/oil help future markets in those categories? | *pending — code in `finetune/`, run not yet complete* |
 
-The one positive result that replicated on held-out data is 2b: **deleting the
-news tables measurably degrades the model.** The headline result — beating the
-crowd — did not survive its holdout, and the write-up says so.
+Every claim here is negative or underpowered. The closest thing to a positive
+is 2b — deleting the news tables costs the model accuracy in both splits, by
++0.023 to +0.030 AUROC — but neither interval clears zero, so it is a
+consistent direction rather than an established effect. An earlier version of
+this study reported +0.052 with an interval that did clear zero; that number
+came from a news table whose coverage collapsed in the test window, and it did
+not survive the fix (see [study 2](studies/02-resolution-at-scale.md)).
 
 Full numbers, caveats and prediction-level examples live in [`studies/`](studies/).
 
@@ -165,7 +169,7 @@ fetch.py db.py predict.py   study 1, the small live example
 ## A note on the results
 
 Most of what is written up here is negative, and the negative parts are the
-load-bearing ones. A dev-split result of **+0.025 AUROC over the market price**
+load-bearing ones. A dev-split result of **+0.024 AUROC over the market price**
 looked strong, had a plausible mechanism, and evaporated on a holdout that was
 fixed before any scoring — the apparent edge traced to one stratum where the
 baseline itself was at chance. Without that split it would have shipped as a
@@ -258,12 +262,3 @@ similarity fixed some of this — it found real paraphrase matches like
 *"Predator: Badlands Rotten Tomatoes score?"* ← *"Predator: Badlands Debuts With
 86% Score"* (cos 0.91) — but the ablation says the text still contributed
 nothing to a six-hour price move.
-
-### And the bug the examples caught
-
-Chasing one of those examples is what exposed a data defect no metric had
-flagged. "Will Jesus Christ return in 2025?" appeared to move 0.009 → 0.993 in
-six hours. It hadn't: of its 1,600 hourly bars, 521 close below 0.20 and 1,079
-above 0.80, because the aggregation pooled fills on *both* outcome tokens — YES
-at 0.01 and NO at 0.99 are the same market. Read the examples; they find things
-the summary statistics cannot.
